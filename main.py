@@ -15,8 +15,12 @@ import logging
 from dotenv import load_dotenv
 import os
 import random
-from db1.db import initialize_database, get_connection
-
+from db1.db import (
+    initialize_database,
+    get_balance,
+    work_user,
+    get_connection
+)
 initialize_database()
 
 load_dotenv()
@@ -37,17 +41,18 @@ lvl2cost = 500
 lvl3cost = 7500
 lvl4cost = 100000
 
-backup = open("currency", "r+")
-
-write = ""
-
-lines = backup.read()
-content = lines.split()
-
-if len(lines) != 0:
-    for i in range(0, len(content), 3):
-        assets[int(content[i])][0] = int(content[i+1])
-        assets[int(content[i])][0] = int(content[i+2])
+# backup = open("currency", "r+")
+#
+# write = ""
+#
+# lines = backup.read()
+# content = lines.split()
+#
+# if len(lines) != 0:
+#     for i in range(0, len(content), 3):
+#         assets[int(content[i])][0] = int(content[i+1])
+#         assets[int(content[i])][0] = int(content[i+2])
+# Legacy persis sys
 
 @bot.event
 async def on_ready():
@@ -97,80 +102,21 @@ async def on_message(message):
 
 @bot.command()
 async def work(ctx):
-    if ctx.author.id in assets:
-        assets[ctx.author.id][0] += assets[ctx.author.id][1]
-    else:
-        assets[ctx.author.id] = [1, 1]
-    await ctx.send(f"🔥{ctx.author.mention} worked for ${assets[ctx.author.id][1]}.🔥")
-    write = f"{ctx.author.id} {assets[ctx.author.id][0]} {assets[ctx.author.id][1]} "
-    print(write)
+    result = work_user(ctx.author.id)
+    await ctx.send(
+        f"{ctx.author.mention} worked for 🔥${result['wage']}.🔥"
+    )
 
 @bot.command()
 async def balance(ctx):
-    if ctx.author.id in assets:
-        await ctx.send(f"{ctx.author.mention}, your balance is 🔥${assets[ctx.author.id][0]}.🔥")
-    else:
-        await ctx.send(f"{ctx.author.mention}, you do not have a balance.")
+    current_balance = get_balance(ctx.author.id)
+    await ctx.send(
+        f"{ctx.author.mention}, your balance is 🔥${current_balance}.🔥"
+    )
         
 @bot.command()
 async def job(ctx):
     await ctx.send(f"{ctx.author.mention}, select your job role!", view=jobMenu())
-
-@bot.command()
-async def transfer_balance(sender_id: int, recipient_id: int, amount: int):
-    if amount <= 0:
-        raise ValueError("Please enter a positive value to transfer.")
-
-    with get_connection() as connection:
-        connection.execute(
-            "INSERT OR IGNORE INTO users (user_id) VALUES (?)",
-            (sender_id,),
-        )
-        connection.execute(
-            "INSERT OR IGNORE INTO users (user_id) VALUES (?)",
-            (recipient_id,),
-        )
-
-        sender = connection.execute(
-            "SELECT balance FROM users WHERE user_id = ?",
-            (sender_id,),
-        ).fetchone()
-
-        if sender["balance"] < amount:
-            raise ValueError("Insufficient balance.")
-
-        connection.execute(
-            """
-            UPDATE users
-            SET balance = balance - ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE user_id = ?
-            """,
-            (amount, sender_id),
-        )
-
-        connection.execute(
-            """
-            UPDATE users
-            SET balance = balance + ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE user_id = ?
-            """,
-            (amount, recipient_id),
-        )
-
-        connection.execute(
-            """
-            INSERT INTO transactions (
-                sender_id,
-                recipient_id,
-                amount,
-                transaction_type
-            )
-            VALUES (?, ?, ?, ?)
-            """,
-            (sender_id, recipient_id, amount, "transfer"),
-        )
 
 # async def transfer(ctx, user: discord.Member, amount: int):
 #     if (amount <= assets[ctx.author.id][0]) and (amount > 0):
@@ -197,6 +143,5 @@ async def coin(ctx, guess, wager: int):
     else:
         await ctx.send(f"{ctx.author.mention}, invalid wager!")
 
-backup.write(write)
-backup.close()
+
 bot.run(token, log_handler=handler, log_level=logging.DEBUG)
