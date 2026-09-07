@@ -1,9 +1,11 @@
 import sqlite3
 from pathlib import Path
 
-DB_PATH = Path("storage/data/ardent.db1")
+DB_PATH = Path("storage/data/ardent.db")
 SCHEMA_PATH = Path("storage/data/schema.sql")
 
+print(f"Using database: {DB_PATH.resolve()}")
+# Debug & eval
 
 def get_connection():
     connection = sqlite3.connect(DB_PATH)
@@ -37,3 +39,94 @@ def get_or_create_user(user_id: int):
             """,
             (user_id,),
         ).fetchone()
+
+def get_balance(user_id: int) -> int:
+    user = get_or_create_user(user_id)
+    return user["balance"]
+
+def get_wage(user_id: int) -> int:
+    user = get_or_create_user(user_id)
+    return user["wage"]
+
+def work_user(user_id: int):
+    with get_connection() as connection:
+        connection.execute(
+            "INSERT OR IGNORE INTO users (user_id) VALUES (?)",
+            (user_id,),
+        )
+
+        connection.execute(
+            """
+            UPDATE users
+            SET balance = balance + wage,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        )
+
+        return connection.execute(
+            """
+            SELECT balance, wage
+            FROM users
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+
+# I dont remember coding, I just black out and let the spirit of python take over me
+
+def transfer_balance(sender_id: int, recipient_id: int, amount: int):
+    if amount <= 0:
+        raise ValueError("Please enter a positive value to transfer.")
+
+    with get_connection() as connection:
+        connection.execute(
+            "INSERT OR IGNORE INTO users (user_id) VALUES (?)",
+            (sender_id,),
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO users (user_id) VALUES (?)",
+            (recipient_id,),
+        )
+
+        sender = connection.execute(
+            "SELECT balance FROM users WHERE user_id = ?",
+            (sender_id,),
+        ).fetchone()
+
+        if sender["balance"] < amount:
+            raise ValueError("Insufficient balance.")
+
+        connection.execute(
+            """
+            UPDATE users
+            SET balance = balance - ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ?
+            """,
+            (amount, sender_id),
+        )
+
+        connection.execute(
+            """
+            UPDATE users
+            SET balance = balance + ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ?
+            """,
+            (amount, recipient_id),
+        )
+
+        connection.execute(
+            """
+            INSERT INTO transactions (
+                sender_id,
+                recipient_id,
+                amount,
+                transaction_type
+            )
+            VALUES (?, ?, ?, ?)
+            """,
+            (sender_id, recipient_id, amount, "transfer"),
+        )
