@@ -1,4 +1,5 @@
-import sqlite3
+#db.py
+import sqlite3, random
 from pathlib import Path
 
 DB_PATH = Path("storage/data/ardent.db")
@@ -130,3 +131,81 @@ def transfer_balance(sender_id: int, recipient_id: int, amount: int):
             """,
             (sender_id, recipient_id, amount, "transfer"),
         )
+
+# Add gamba:
+def coin_flip(user_id: int, guess: str, wager: int):
+    guess = guess.lower()
+
+    if guess not in ("heads", "tails"):
+        raise ValueError("Guess must be heads or tails.")
+
+    if wager <= 0:
+        raise ValueError("Wager must be greater than zero.")
+
+    with get_connection() as connection:
+        connection.execute(
+            "INSERT OR IGNORE INTO users (user_id) VALUES (?)",
+            (user_id,),
+        )
+
+        user = connection.execute(
+            """
+            SELECT balance FROM users WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+
+        if user["balance"] < wager:
+            raise ValueError("Insufficient balance.")
+
+        result = random.choice(["heads", "tails"])
+
+        if result == guess:
+            connection.execute(
+                """
+                UPDATE users
+                SET balance = balance + ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ?
+                """,
+                (wager, user_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO transactions (recipient_id,
+                                          amount,
+                                          transaction_type)
+                VALUES (?, ?, 'coin_win')
+                """,
+                (user_id, wager),
+            )
+
+            won = True
+        else:
+            connection.execute(
+                """
+                UPDATE users
+                SET balance = balance - ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ?
+                """,
+                (wager, user_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO transactions (sender_id,
+                                          amount,
+                                          transaction_type)
+                VALUES (?, ?, 'coin_loss')
+                """,
+                (user_id, wager),
+            )
+
+            won = False
+
+        new_balance = connection.execute(
+            "SELECT balance FROM users WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()["balance"]
+
+        return result, won, new_balance
