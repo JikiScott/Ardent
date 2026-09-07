@@ -213,9 +213,11 @@ logs/
 *.log.*
 
 # Local bot/runtime data
-storage/data/
-!storage/data/.gitkeep
-!storage/data/schema.sql
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+# Keep schema.sql and .gitkeep tracked; database files are already ignored above.
 
 # IDE/editor backups
 *.swp
