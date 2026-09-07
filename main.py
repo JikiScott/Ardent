@@ -15,6 +15,9 @@ import logging
 from dotenv import load_dotenv
 import os
 import random
+from db1.db import initialize_database, get_connection
+
+initialize_database()
 
 load_dotenv()
 
@@ -98,14 +101,14 @@ async def work(ctx):
         assets[ctx.author.id][0] += assets[ctx.author.id][1]
     else:
         assets[ctx.author.id] = [1, 1]
-    await ctx.send(f"{ctx.author.mention} worked for ${assets[ctx.author.id][1]}.")
+    await ctx.send(f"🔥{ctx.author.mention} worked for ${assets[ctx.author.id][1]}.🔥")
     write = f"{ctx.author.id} {assets[ctx.author.id][0]} {assets[ctx.author.id][1]} "
     print(write)
 
 @bot.command()
 async def balance(ctx):
     if ctx.author.id in assets:
-        await ctx.send(f"{ctx.author.mention}, your balance is ${assets[ctx.author.id][0]}.")
+        await ctx.send(f"{ctx.author.mention}, your balance is 🔥${assets[ctx.author.id][0]}.🔥")
     else:
         await ctx.send(f"{ctx.author.mention}, you do not have a balance.")
         
@@ -114,13 +117,68 @@ async def job(ctx):
     await ctx.send(f"{ctx.author.mention}, select your job role!", view=jobMenu())
 
 @bot.command()
-async def transfer(ctx, user: discord.Member, amount: int):
-    if (amount <= assets[ctx.author.id][0]) and (amount > 0):
-        assets[ctx.author.id][0] -= amount
-        assets[user.id][0] += amount
-        await ctx.send(f"{ctx.author.mention}, you transferred {amount} to {user.mention}.")
-    else:
-        await ctx.send(f"{ctx.author.mention}, invalid transfer!")
+async def transfer_balance(sender_id: int, recipient_id: int, amount: int):
+    if amount <= 0:
+        raise ValueError("Please enter a positive value to transfer.")
+
+    with get_connection() as connection:
+        connection.execute(
+            "INSERT OR IGNORE INTO users (user_id) VALUES (?)",
+            (sender_id,),
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO users (user_id) VALUES (?)",
+            (recipient_id,),
+        )
+
+        sender = connection.execute(
+            "SELECT balance FROM users WHERE user_id = ?",
+            (sender_id,),
+        ).fetchone()
+
+        if sender["balance"] < amount:
+            raise ValueError("Insufficient balance.")
+
+        connection.execute(
+            """
+            UPDATE users
+            SET balance = balance - ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ?
+            """,
+            (amount, sender_id),
+        )
+
+        connection.execute(
+            """
+            UPDATE users
+            SET balance = balance + ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ?
+            """,
+            (amount, recipient_id),
+        )
+
+        connection.execute(
+            """
+            INSERT INTO transactions (
+                sender_id,
+                recipient_id,
+                amount,
+                transaction_type
+            )
+            VALUES (?, ?, ?, ?)
+            """,
+            (sender_id, recipient_id, amount, "transfer"),
+        )
+
+# async def transfer(ctx, user: discord.Member, amount: int):
+#     if (amount <= assets[ctx.author.id][0]) and (amount > 0):
+#         assets[ctx.author.id][0] -= amount
+#         assets[user.id][0] += amount
+#         await ctx.send(f"{ctx.author.mention}, you transferred {amount} to {user.mention}.")
+#     else:
+#         await ctx.send(f"{ctx.author.mention}, invalid transfer!")
 
 @bot.command()
 async def coin(ctx, guess, wager: int):
@@ -130,7 +188,7 @@ async def coin(ctx, guess, wager: int):
         flip = random.choice(cointoss)
         
         if flip == guess:
-            await ctx.send(f"{ctx.author.mention}, you correctly guessed {guess} and thus have won ${wager}!")
+            await ctx.send(f"{ctx.author.mention}, you correctly guessed {guess} and thus have won 🔥${wager}🔥!")
             assets[ctx.author.id][0] += wager
         else:
             await ctx.send(f"{ctx.author.mention}, you made an incorrect guess and thus have lost ${wager}.")
