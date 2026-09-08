@@ -208,9 +208,10 @@ cython_debug/
 Thumbs.db
 Desktop.ini
 
-# Logs / runtime artifacts
+# Logs / Backups
 logs/
 *.log.*
+backups/
 
 # Local bot/runtime data
 *.db
