@@ -5,6 +5,8 @@ A novel economic simulator bot built for a Discord Mock-Government, The Serene R
 <p align="center">
   <a href="https://conventionalcommits.org/en/v1.0.0/"><img src="https://img.shields.io/badge/Conventional%20Commits-1.0.0-%23FE5196?logo=conventionalcommits&logoColor=white"></a>
   <a href="https://github.com/psf/black"><img src="https://img.shields.io/badge/code%20style-black-000000.svg"></a>
+  <a href="https://github.com/psf/black"><img src="https://img.shields.io/badge/fuck-russia-e4181c.svg?labelColor=000000"></a>
+
 </p>
 
 # The Vision:
