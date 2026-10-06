@@ -15,7 +15,6 @@ from discord.ext import commands
 import logging
 from dotenv import load_dotenv
 import os
-import random
 from db1.db import (
     initialize_database,
     get_balance,
@@ -23,9 +22,13 @@ from db1.db import (
     get_connection,
     transfer_balance,
     coin_flip,
+    add_crystals,
+    get_user_firm,
+    create_firm,
 )
+from econ.mine import mine
+import time
 initialize_database()
-
 load_dotenv()
 
 token = os.getenv('DISCORD_TOKEN')
@@ -59,7 +62,7 @@ lvl4cost = 100000
 
 @bot.event
 async def on_ready():
-    print("Running Love Theme (GPLv3)")
+    print("Running Love Theme (GPLv3) READY")
 
 class jobMenu(discord.ui.View):
     def __init__(self):
@@ -101,6 +104,8 @@ async def on_message(message):
     if "amayo" in message.content.lower():
         await message.channel.send("https://www.youtube.com/watch?v=TZtiJN6yiik")
     await bot.process_commands(message)
+# LEG END
+
 
 @bot.command()
 @commands.cooldown(1, 30, commands.BucketType.user)
@@ -109,12 +114,15 @@ async def work(ctx):
     await ctx.send(
         f"{ctx.author.mention} worked for 🔥${result['wage']}.🔥"
     )
+
+
 @work.error
 async def work_error(ctx, error):
     if isinstance(error, commands.CommandOnCooldown):
+        retry_timestamp = int(time.time() + error.retry_after)
         await ctx.send(
             f"{ctx.author.mention}, you can work again in "
-            f"{error.retry_after:.0f} seconds."
+            f"<t:{retry_timestamp}:R>."
         )
     else:
         raise error
@@ -192,6 +200,123 @@ async def coin_error(ctx, error):
     else:
         raise error
 
+# MINING START
+@bot.command(name="mine")
+@commands.cooldown(1, 30, commands.BucketType.user)
+async def mine_command(ctx):
+    firm = get_user_firm(ctx.author.id)
 
+    if firm is None:
+        await ctx.send(
+            f"{ctx.author.mention}, you must be employed by a firm to work."
+        )
+        return
+
+    result = mine()
+
+    if result.crystal_class is None:
+        await ctx.send(
+            f"{ctx.author.mention} completed a mining shift for "
+            f"**{firm['name']}**, but no crystals were recovered."
+        )
+        return
+
+    new_balance = add_crystals(
+        "firm",
+        firm["firm_id"],
+        result.crystal_class,
+        result.grade,
+        result.quantity
+    )
+
+    await ctx.send(
+        f"{ctx.author.mention} mined **{result.quantity} stone of "
+        f"{result.grade.title()} {result.crystal_class.title()} crystal** "
+        f"for **{firm['name']}**.\n"
+        f"Firm inventory now holds **{new_balance} stone** of this crystal."
+    )
+
+@mine_command.error
+async def mine_error(ctx, error):
+    if isinstance(error, commands.CommandOnCooldown):
+        await ctx.send(
+            f"{ctx.author.mention}, you can mine again in "
+            f"{error.retry_after:.0f} seconds."
+        )
+    else:
+        raise error
+
+# MINING END
+# FIRM START
+@bot.group(invoke_without_command=True)
+async def firm(ctx):
+    await ctx.send(
+        "Firm commands:\n"
+        "`.firm create <name>` - Create a firm\n"
+        "`.firm info` - View your current firm"
+    )
+
+@firm.command(name="create")
+async def firm_create(ctx, *, name: str):
+    existing_firm = get_user_firm(ctx.author.id)
+
+    if existing_firm is not None:
+        await ctx.send(
+            f"{ctx.author.mention}, you are already employed by "
+            f"**{existing_firm['name']}**."
+        )
+        return
+
+    try:
+        firm_id = create_firm(
+            ctx.author.id,
+            name
+        )
+
+        await ctx.send(
+            f"🔥 **{ctx.author.mention} founded __{name.strip()}__**! 🔥\n"
+            f"Firm ID: **{firm_id}**",
+        allowed_mentions = discord.AllowedMentions(
+            users=False,
+            roles=False,
+            everyone=False
+        )
+        )
+
+    except ValueError as error:
+        await ctx.send(
+            f"{ctx.author.mention}, {error}"
+        )
+
+@firm_create.error
+async def firm_create_error(ctx, error):
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(
+            f"{ctx.author.mention}, you must provide a firm name.\n"
+            f"Usage: `.firm create <name>`"
+        )
+    else:
+        raise error
+
+
+@firm.command(name="info")
+async def firm_info(ctx):
+    current_firm = get_user_firm(ctx.author.id)
+
+    if current_firm is None:
+        await ctx.send(
+            f"{ctx.author.mention}, you are not currently a member of a firm."
+        )
+        return
+
+    await ctx.send(
+        f"🔥 __**{current_firm['name']}**__ 🔥\n"
+        f"*Firm ID:* ``{current_firm['firm_id']}``\n"
+        f"*Owner:* <@{current_firm['owner_id']}>\n"
+        f"*Your role:* **{current_firm['role'].title()}**",
+        allowed_mentions = discord.AllowedMentions.none()
+    )
+
+# FIRM END
 
 bot.run(token, log_handler=handler, log_level=logging.DEBUG)
