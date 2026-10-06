@@ -17,4 +17,4 @@ sudo systemctl restart ardent
 echo "Checking service"
 sudo systemctl status ardent --no-pager
 
-echo "--Deployment complete--"
+echo "::Deployment complete::"
