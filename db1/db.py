@@ -3,6 +3,13 @@ import sqlite3, random
 from pathlib import Path
 from decimal import Decimal
 from econ.crystals import get_crystal_equivalency
+from contextlib import contextmanager
+from econ.currency import (
+    to_farthings,
+    format_currency,
+    FARTHINGS_PER_POUND,
+)
+
 
 DB_PATH = Path("storage/data/ardent.db")
 SCHEMA_PATH = Path("storage/data/schema.sql")
@@ -10,11 +17,17 @@ SCHEMA_PATH = Path("storage/data/schema.sql")
 print(f"Using database: {DB_PATH.resolve()}")
 # Debug & eval
 
+@contextmanager
 def get_connection():
     connection = sqlite3.connect(DB_PATH)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON;")
-    return connection
+
+    try:
+        with connection:
+            yield connection
+    finally:
+        connection.close()
 
 
 def initialize_database():
@@ -80,6 +93,12 @@ def work_user(user_id: int):
 # I dont remember coding, I just black out and let the spirit of python take over me
 
 def transfer_balance(sender_id: int, recipient_id: int, amount: int):
+    if sender_id == recipient_id:
+        raise ValueError("You cannot transfer money to yourself.")
+
+    if type(amount) is not int:
+        raise ValueError("Please enter a positive whole number.")
+
     if amount <= 0:
         raise ValueError("Please enter a positive value to transfer.")
 
@@ -93,24 +112,22 @@ def transfer_balance(sender_id: int, recipient_id: int, amount: int):
             (recipient_id,),
         )
 
-        sender = connection.execute(
-            "SELECT balance FROM users WHERE user_id = ?",
-            (sender_id,),
-        ).fetchone()
-
-        if sender["balance"] < amount:
-            raise ValueError("Insufficient balance.")
-
-        connection.execute(
+        # Deduct only if the sender has funds
+        cursor = connection.execute(
             """
             UPDATE users
             SET balance = balance - ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE user_id = ?
+              AND balance >= ?
             """,
-            (amount, sender_id),
+            (amount, sender_id, amount),
         )
 
+        if cursor.rowcount != 1:
+            raise ValueError("Insufficient balance.")
+
+        # Credit recipient
         connection.execute(
             """
             UPDATE users
@@ -121,6 +138,7 @@ def transfer_balance(sender_id: int, recipient_id: int, amount: int):
             (amount, recipient_id),
         )
 
+        # Record transaction
         connection.execute(
             """
             INSERT INTO transactions (
@@ -336,6 +354,75 @@ def add_crystals(
 
     return new_quantity
 
+def pay_mining_wage(user_id: int, firm_id: int, amount: int) -> int:
+    """
+    Pay a mining wage from the Treasury.
+
+    Amount is expressed in farthings.
+    Returns the amount paid.
+    """
+    if type(amount) is not int or amount <= 0:
+        raise ValueError("Mining wage must be a positive whole number of farthings.")
+
+    with get_connection() as conn:
+        # Verify employment
+        membership = conn.execute("""
+            SELECT 1
+            FROM firm_members
+            WHERE user_id = ?
+              AND firm_id = ?
+        """, (user_id, firm_id)).fetchone()
+
+        if membership is None:
+            raise ValueError("You are not employed by this firm.")
+
+        # Ensure the user exists
+        conn.execute("""
+            INSERT OR IGNORE INTO users (user_id)
+            VALUES (?)
+        """, (user_id,))
+
+        # Deduct wage only if sufficient Treasury funds exist
+        cursor = conn.execute("""
+            UPDATE treasury
+            SET balance = balance - ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE treasury_id = 1
+              AND balance >= ?
+        """, (amount, amount))
+
+        if cursor.rowcount != 1:
+            raise ValueError(
+                "The Arderan Treasury has insufficient funds to pay your mining wage."
+            )
+
+        # Credit employee
+        conn.execute("""
+            UPDATE users
+            SET balance = balance + ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ?
+        """, (amount, user_id))
+
+        # Record Treasury payment
+        conn.execute("""
+            INSERT INTO treasury_transactions (
+                amount,
+                transaction_type,
+                user_id,
+                firm_id
+            )
+            VALUES (?, ?, ?, ?)
+        """, (
+            amount,
+            "mining_wage",
+            user_id,
+            firm_id
+        ))
+
+        return amount
+
+# FIRMS START
 def validate_firm_name(name: str) -> str:
     name = name.strip()
 
@@ -463,3 +550,216 @@ def add_firm_member(
             """,
             (firm_id, user_id, role)
         )
+
+def create_firm_invite(firm_id: int, inviter_id: int, user_id: int):
+    if inviter_id == user_id:
+        raise ValueError("You cannot invite yourself.")
+
+    with get_connection() as conn:
+        firm = conn.execute(
+            """
+            SELECT owner_id
+            FROM firms
+            WHERE firm_id = ?
+            """,
+            (firm_id,)
+        ).fetchone()
+
+        if firm is None:
+            raise ValueError("Firm does not exist.")
+
+        if firm["owner_id"] != inviter_id:
+            raise ValueError("Only owner of the firm can hire employees.")
+
+        existing = conn.execute(
+            """
+            SELECT 1
+            FROM firm_members
+            WHERE user_id = ?
+            """,
+            (user_id,)
+        ).fetchone()
+
+        if existing is not None:
+            raise ValueError("This user already belongs to a firm.")
+
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO users (user_id)
+            VALUES (?)
+            """,
+            (user_id,)
+        )
+
+        try:
+            conn.execute(
+                """
+                INSERT INTO firm_invites (firm_id, user_id)
+                VALUES (?, ?)
+                """,
+                (firm_id, user_id)
+            )
+        except sqlite3.IntegrityError as error:
+            raise ValueError(
+                "That player already has an invitation from this firm."
+            ) from error
+
+def get_firm_invites(user_id: int):
+    with get_connection() as conn:
+        return conn.execute(
+            """
+            SELECT
+                fi.firm_id,
+                f.name,
+                f.owner_id,
+                fi.invited_at
+            FROM firm_invites AS fi
+            JOIN firms AS f
+                ON f.firm_id = fi.firm_id
+            WHERE fi.user_id = ?
+            ORDER BY fi.invited_at DESC
+            """,
+            (user_id,)
+        ).fetchall()
+
+def accept_firm_invite(user_id: int, firm_id: int):
+    try:
+        with get_connection() as conn:
+            invitation = conn.execute(
+                """
+                SELECT f.name
+                FROM firm_invites AS fi
+                JOIN firms AS f
+                    ON f.firm_id = fi.firm_id
+                WHERE fi.firm_id = ?
+                  AND fi.user_id = ?
+                """,
+                (firm_id, user_id)
+            ).fetchone()
+
+            if invitation is None:
+                raise ValueError(
+                    "You have not been invited to that firm."
+                )
+
+            existing = conn.execute(
+                """
+                SELECT 1
+                FROM firm_members
+                WHERE user_id = ?
+                """,
+                (user_id,)
+            ).fetchone()
+
+            if existing is not None:
+                raise ValueError(
+                    "Please leave your current firm before joining another."
+                )
+
+            conn.execute(
+                """
+                INSERT INTO firm_members (firm_id, user_id, role)
+                VALUES (?, ?, 'laborer')
+                """,
+                (firm_id, user_id)
+            )
+
+            conn.execute(
+                """
+                DELETE FROM firm_invites
+                WHERE user_id = ?
+                """,
+                (user_id,)
+            )
+
+            return invitation["name"]
+
+    except sqlite3.IntegrityError as error:
+        raise ValueError(
+            "Unknown error: ask a dev!"
+        ) from error
+
+def decline_firm_invite(user_id: int, firm_id: int):
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            DELETE FROM firm_invites
+            WHERE firm_id = ?
+              AND user_id = ?
+            """,
+            (firm_id, user_id)
+        )
+
+        if cursor.rowcount == 0:
+            raise ValueError(
+                "You have not been invited to that firm."
+            )
+
+
+def get_firm_members(firm_id: int):
+    with get_connection() as conn:
+        return conn.execute(
+            """
+            SELECT user_id, role, joined_at
+            FROM firm_members
+            WHERE firm_id = ?
+            ORDER BY
+                CASE WHEN role = 'owner' THEN 0 ELSE 1 END,
+                joined_at
+            """,
+            (firm_id,)
+        ).fetchall()
+
+def leave_firm(user_id: int):
+    with get_connection() as conn:
+        membership = conn.execute("""
+            SELECT fm.firm_id, fm.role, f.name
+            FROM firm_members AS fm
+            JOIN firms AS f ON f.firm_id = fm.firm_id
+            WHERE fm.user_id = ?
+        """, (user_id,)).fetchone()
+
+        if membership is None:
+            raise ValueError("You are not employed by a firm.")
+
+        if membership["role"] == "owner":
+            raise ValueError(
+                "Firm owners cannot leave their own firm."
+            )
+
+        conn.execute("""
+            DELETE FROM firm_members
+            WHERE user_id = ? AND firm_id = ?
+        """, (user_id, membership["firm_id"]))
+
+        return membership["name"]
+
+
+def dismiss_firm_member(owner_id: int, target_id: int):
+    with get_connection() as conn:
+        firm = conn.execute("""
+            SELECT firm_id, name
+            FROM firms
+            WHERE owner_id = ?
+        """, (owner_id,)).fetchone()
+
+        if firm is None:
+            raise ValueError("You do not own a firm.")
+
+        if owner_id == target_id:
+            raise ValueError("You cannot dismiss yourself.")
+
+        cursor = conn.execute("""
+            DELETE FROM firm_members
+            WHERE firm_id = ?
+              AND user_id = ?
+              AND role = 'laborer'
+        """, (firm["firm_id"], target_id))
+
+        if cursor.rowcount == 0:
+            raise ValueError(
+                "That user is not employed by your firm."
+            )
+
+        return firm["name"]
+

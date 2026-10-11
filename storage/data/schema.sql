@@ -43,11 +43,77 @@ CREATE TABLE IF NOT EXISTS firms (
 CREATE TABLE IF NOT EXISTS firm_members (
     firm_id INTEGER NOT NULL,
     user_id INTEGER NOT NULL UNIQUE,
-    role TEXT NOT NULL DEFAULT 'worker',
+    role TEXT NOT NULL DEFAULT 'laborer',
     joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     PRIMARY KEY (firm_id, user_id),
 
     FOREIGN KEY (firm_id) REFERENCES firms(firm_id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES users(user_id)
+);
+
+-- EMPLOY INVITES
+CREATE TABLE IF NOT EXISTS firm_invites (
+    firm_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    invited_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (firm_id, user_id),
+
+    FOREIGN KEY (firm_id)
+        REFERENCES firms(firm_id)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (user_id)
+        REFERENCES users(user_id)
+);
+
+-- TREASURY
+CREATE TABLE IF NOT EXISTS treasury (
+    treasury_id INTEGER PRIMARY KEY CHECK (treasury_id = 1),
+
+    balance INTEGER NOT NULL DEFAULT 0
+        CHECK (balance >= 0),
+
+    daily_issuance_limit INTEGER NOT NULL DEFAULT 9600
+        CHECK (daily_issuance_limit >= 0),
+
+    issued_today INTEGER NOT NULL DEFAULT 0
+        CHECK (issued_today >= 0),
+
+    total_issued INTEGER NOT NULL DEFAULT 0
+        CHECK (total_issued >= 0),
+
+    last_issuance_date TEXT,
+
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+INSERT OR IGNORE INTO treasury (
+    treasury_id,
+    balance,
+    daily_issuance_limit
+)
+VALUES (
+    1,
+    9600,
+    9600
+);
+CREATE TABLE IF NOT EXISTS treasury_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    amount INTEGER NOT NULL CHECK (amount > 0),
+
+    transaction_type TEXT NOT NULL,
+
+    user_id INTEGER,
+    firm_id INTEGER,
+
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (user_id)
+        REFERENCES users(user_id),
+
+    FOREIGN KEY (firm_id)
+        REFERENCES firms(firm_id)
+        ON DELETE SET NULL
 );
