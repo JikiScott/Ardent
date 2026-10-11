@@ -306,7 +306,7 @@ async def coin(
         if won:
             embed = discord.Embed(
                 title="🫴🪙 Coin Flip: 🔥 WINNER! 🔥",
-                description=
+                description=(
                     f"*The coin landed on **{result.title()}**!*\n\n"
                     f"{ctx.author.mention} won "
                     f"🔥**{wager_display}**🔥!"
