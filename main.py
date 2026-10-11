@@ -13,12 +13,13 @@ from dotenv import load_dotenv
 import os
 from db1.db import (
     initialize_database,
-    get_balance,
-    work_user,
     get_connection,
+    get_balance,
     transfer_balance,
+    work_user,
     coin_flip,
     add_crystals,
+    get_inventory,
     get_user_firm,
     create_firm,
     get_firm_members,
@@ -27,10 +28,14 @@ from db1.db import (
     accept_firm_invite,
     decline_firm_invite,
     leave_firm,
-    dismiss_firm_member
+    dismiss_firm_member,
+    disband_firm,
+    rename_firm,
 )
 from econ.mine import mine
 import time
+from econ.currency import format_currency, to_farthings
+
 initialize_database()
 load_dotenv()
 
@@ -114,8 +119,28 @@ async def on_message(message):
 @commands.cooldown(1, 30, commands.BucketType.user)
 async def work(ctx):
     result = work_user(ctx.author.id)
+
+    embed = discord.Embed(
+        title="🔥 Work Complete! 🔥",
+        description=f"*{ctx.author.mention} has completed a shift!*",
+        color=discord.Color.red()
+    )
+
+    embed.add_field(
+        name="***Wages Earned***",
+        value=format_currency(result["wage"]),
+        inline=True
+    )
+
+    embed.add_field(
+        name="***New Balance***",
+        value=format_currency(result["balance"]),
+        inline=True
+    )
+
     await ctx.send(
-        f"{ctx.author.mention} worked for 🔥{result['wage']} Sovereign!🔥"
+        embed=embed,
+        allowed_mentions=discord.AllowedMentions.none()
     )
 
 
@@ -130,16 +155,22 @@ async def work_error(ctx, error):
     else:
         raise error
 
-@bot.command()
+@bot.command(aliases=["bal"])
 async def balance(ctx):
     current_balance = get_balance(ctx.author.id)
-    await ctx.send(
-        f"{ctx.author.mention}, your balance is 🔥{current_balance} Sovereign.🔥"
+
+    embed = discord.Embed(
+        title="*Arderian Holdings*",
+        description=(
+            f"**User:** {ctx.author.mention}\n"
+            f"**Balance:** 🔥 {format_currency(current_balance)} 🔥"
+        ),
+        color=discord.Color.orange()
     )
 
+    await ctx.send(embed=embed)
 @bot.command(name="pay")
-async def pay(ctx, member: discord.Member, amount: int):
-    # Prevent payments to bots
+async def pay(ctx, member: discord.Member, amount: int, denomination: str = "sovereign"):    # Prevent payments to bots
     if member.bot:
         await ctx.send("You cannot send money to bots.")
         return
@@ -149,26 +180,26 @@ async def pay(ctx, member: discord.Member, amount: int):
         await ctx.send("You cannot pay yourself.")
         return
 
-    # Validate amount
-    if amount <= 0:
-        await ctx.send("Payment must be greater than zero.")
-        return
-
-    # Execute transfer
+    # Convert into farthings
     try:
+        farthings = to_farthings(amount, denomination)
+
+        if farthings <= 0:
+            raise ValueError("Payment must be greater than zero.")
+
+    # Execute transfer in farthings
         transfer_balance(
             ctx.author.id,
             member.id,
-            amount
+            farthings
         )
 
     except ValueError as error:
         await ctx.send(f"Payment failed: {error}")
         return
-
     # Confirmation embed
     embed = discord.Embed(
-        title="Sovereign Transfer",
+        title="*Arderian Holdings Transfer*",
         description="Payment completed successfully.",
         color=discord.Color.gold()
     )
@@ -187,7 +218,7 @@ async def pay(ctx, member: discord.Member, amount: int):
 
     embed.add_field(
         name="**Amount**",
-        value=f"{amount:,} Sovereigns",
+        value=f"🔥 {format_currency(farthings)} 🔥",
         inline=False
     )
 
@@ -209,7 +240,7 @@ async def pay_error(ctx, error):
 
     elif isinstance(error, commands.BadArgument):
         await ctx.send(
-            "Invalid amount. Sovereigns must be whole numbers."
+            "Invalid amount. Please enter a whole number."
         )
 
     else:
@@ -246,31 +277,70 @@ async def job(ctx):
 # Legacy gamba
 #
 # Gamba add:
+
 @bot.command()
 @commands.cooldown(1, 3, commands.BucketType.user)
-async def coin(ctx, guess: str, wager: int):
+async def coin(
+    ctx,
+    guess: str,
+    wager: int,
+    denomination: str = "sovereign"
+):
     try:
+        # Convert the wager to farthings
+        wager_farthings = to_farthings(wager, denomination)
+
+        if wager_farthings <= 0:
+            raise ValueError("Your wager must be greater than zero.")
+
+        # coin_flip() works with farthings
         result, won, new_balance = coin_flip(
             ctx.author.id,
             guess,
-            wager,
+            wager_farthings
         )
 
+        wager_display = format_currency(wager_farthings)
+        balance_display = format_currency(new_balance)
+
         if won:
-            await ctx.send(
-                f"🫴🪙  **{result.title()}!** "
-                f"{ctx.author.mention} won 🔥${wager}!🔥 "
-                f"New Balance: ${new_balance}"
+            embed = discord.Embed(
+                title="🫴🪙 Coin Flip: 🔥 WINNER! 🔥",
+                description=
+                    f"*The coin landed on **{result.title()}**!*\n\n"
+                    f"{ctx.author.mention} won "
+                    f"🔥**{wager_display}**🔥!"
+                ),
+                color=discord.Color.red()
             )
         else:
-            await ctx.send(
-                f"🫴🪙 **{result.title()}!** "
-                f"{ctx.author.mention} lost ${wager}. "
-                f"New Balance: ${new_balance}"
+            embed = discord.Embed(
+                title="🫴🪙 Coin Flip: Loss",
+                description=(
+                    f"*The coin landed on **{result.title()}**!*\n\n"
+                    f"{ctx.author.mention} lost "
+                    f"**{wager_display}**."
+                ),
+                color=discord.Color.dark_grey()
             )
 
+        embed.add_field(
+            name="*New Balance*",
+            value=f"**{balance_display}**",
+            inline=False
+        )
+
+        await ctx.send(
+            embed=embed,
+            allowed_mentions=discord.AllowedMentions.none()
+        )
+
     except ValueError as error:
-        await ctx.send(f"{ctx.author.mention}, {error}")
+        await ctx.send(
+            f"{ctx.author.mention}, {error}"
+        )
+
+
 @coin.error
 async def coin_error(ctx, error):
     if isinstance(error, commands.CommandOnCooldown):
@@ -279,7 +349,15 @@ async def coin_error(ctx, error):
             f"🔥{error.retry_after:.0f} seconds.🔥"
         )
     else:
-        raise error
+        logging.exception(
+            "Coin command failed",
+            exc_info=(type(error), error, error.__traceback__)
+        )
+        await ctx.send(
+            f"Coin flip failed: `{type(error).__name__}`. "
+            "Check the bot logs."
+        )
+
 
 # MINING START
 @bot.command(name="mine")
@@ -326,6 +404,53 @@ async def mine_error(ctx, error):
         )
     else:
         raise error
+
+@bot.command(aliases=["inv"])
+async def inventory(ctx):
+    # Find the user's firm
+    firm = get_user_firm(ctx.author.id)
+
+    if firm is None:
+        await ctx.send(
+            "You must be employed by a firm to view its inventory."
+        )
+        return
+
+    # Retrieve the firm's inventory
+    current_inventory = get_inventory(
+        "firm",
+        firm["firm_id"]
+    )
+
+    embed = discord.Embed(
+        title=f"🔥 {firm['name']}: *Crystal Inventory* 🔥",
+        description=f"-# Firm ID: `{firm['firm_id']}`",
+        color=discord.Color.dark_gold()
+    )
+
+    if not current_inventory:
+        embed.add_field(
+            name="*Inventory Empty*",
+            value="**This firm has not mined any crystals yet.**",
+            inline=False
+        )
+
+    else:
+        for crystal in current_inventory:
+            crystal_class = crystal["crystal_class"].title()
+            grade = crystal["grade"].title()
+            quantity = crystal["quantity"]
+
+            embed.add_field(
+                name=f"__{grade} {crystal_class}__",
+                value=f"**{quantity} stone**",
+                inline=True
+            )
+
+    await ctx.send(
+        embed=embed,
+        allowed_mentions=discord.AllowedMentions.none()
+    )
 
 # MINING END
 # FIRM START
@@ -650,6 +775,185 @@ async def firm_members(ctx):
         embed=embed,
         allowed_mentions=discord.AllowedMentions.none()
     )
+
+class ConfirmDisband(discord.ui.View):
+    def __init__(self, owner_id: int):
+        super().__init__(timeout=60)
+        self.owner_id = owner_id
+
+    @discord.ui.button(
+        label="Disband Firm",
+        style=discord.ButtonStyle.danger,
+        emoji="🅾️"
+    )
+    async def confirm(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "Only the firm owner can confirm disbandment.",
+                ephemeral=True
+            )
+            return
+
+        try:
+            firm_name = disband_firm(self.owner_id)
+
+        except ValueError as error:
+            await interaction.response.send_message(
+                str(error),
+                ephemeral=True
+            )
+            return
+
+        # Disable buttons after successful disbandment
+        for item in self.children:
+            item.disabled = True
+
+        # Create confirmation embed
+        embed = discord.Embed(
+            description=(
+                "# FIRM DISBANDED\n"
+                f"**{firm_name}** has been permanently disbanded.\n\n"
+                "All employees have been dismissed, pending invitations "
+                "have been cancelled, and the firm's crystal inventory "
+                "has been deleted."
+            ),
+            color=discord.Color.red()
+        )
+
+        embed.set_footer(
+            text="This action cannot be undone."
+        )
+
+        # Replace original confirmation with result
+        await interaction.response.edit_message(
+            content=None,
+            embed=embed,
+            view=self
+        )
+
+        self.stop()
+
+    @discord.ui.button(
+        label="Cancel",
+        style=discord.ButtonStyle.secondary
+    )
+    async def cancel(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "Only the firm owner can cancel this request.",
+                ephemeral=True
+            )
+            return
+
+        for item in self.children:
+            item.disabled = True
+
+        embed = discord.Embed(
+            title="Firm Disbandment Cancelled",
+            description="Your firm has been preserved. No changes were made.",
+            color=discord.Color.green()
+        )
+
+        await interaction.response.edit_message(
+            content=None,
+            embed=embed,
+            view=self
+        )
+
+        self.stop()
+
+
+@firm.command(name="disband")
+async def firm_disband(ctx):
+    firm_data = get_user_firm(ctx.author.id)
+
+    if firm_data is None:
+        await ctx.send("You do not belong to a firm.")
+        return
+
+    if firm_data["owner_id"] != ctx.author.id:
+        await ctx.send("Only the firm owner can disband a firm.")
+        return
+
+    embed = discord.Embed(
+        description=(
+            f"# DISBAND FIRM?\n"
+            f"Are you sure you want to permanently disband "
+            f"**{firm_data['name']}**?\n\n"
+            "__**This action cannot be undone.**__\n\n"
+            "- All employees will be dismissed,\n"
+            "- pending invitations will be cancelled,\n "
+            "- and the firm's crystal inventory will be deleted."
+        ),
+        color=discord.Color.red()
+    )
+
+    await ctx.send(
+        embed=embed,
+        view=ConfirmDisband(ctx.author.id),
+        allowed_mentions=discord.AllowedMentions.none()
+    )
+
+
+@firm.command(name="rename")
+async def firm_rename(ctx, *, new_name: str):
+    try:
+        old_name, updated_name = rename_firm(
+            ctx.author.id,
+            new_name
+        )
+
+    except ValueError as error:
+        await ctx.send(f"Unable to rename firm: {error}")
+        return
+
+    embed = discord.Embed(
+        title="🔥 Firm Renamed 🔥",
+        description=(
+            "Your firm has been successfully renamed!"
+        ),
+        color=discord.Color.orange()
+    )
+
+    embed.add_field(
+        name="***Previous Name***",
+        value=old_name,
+        inline=False
+    )
+
+    embed.add_field(
+        name="***New Name***",
+        value=f"**{updated_name}**",
+        inline=False
+    )
+
+    embed.set_footer(
+        text="All employees and firm assets have been preserved."
+    )
+
+    await ctx.send(
+        embed=embed,
+        allowed_mentions=discord.AllowedMentions.none()
+    )
+
+
+@firm_rename.error
+async def firm_rename_error(ctx, error):
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(
+            "Usage: `.firm rename <new name>`"
+        )
+    else:
+        raise error
+
 # FIRM END
 
 bot.run(token, log_handler=handler, log_level=logging.DEBUG)

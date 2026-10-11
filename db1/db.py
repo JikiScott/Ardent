@@ -422,6 +422,20 @@ def pay_mining_wage(user_id: int, firm_id: int, amount: int) -> int:
 
         return amount
 
+def get_inventory(owner_type: str, owner_id: int):
+# Retrieve all crystal invent for an owner, returns a list of SQLite rows
+    owner_type = normalize_owner_type(owner_type)
+
+    with get_connection() as conn:
+        return conn.execute("""
+            SELECT crystal_class, grade, quantity
+            FROM crystal_inventory
+            WHERE owner_type = ?
+              AND owner_id = ?
+            ORDER BY crystal_class, grade
+        """, (owner_type, owner_id)).fetchall()
+
+# CRYSTALS END
 # FIRMS START
 def validate_firm_name(name: str) -> str:
     name = name.strip()
@@ -763,3 +777,80 @@ def dismiss_firm_member(owner_id: int, target_id: int):
 
         return firm["name"]
 
+def disband_firm(owner_id: int) -> str:
+# return disband firm name
+    with get_connection() as conn:
+        firm = conn.execute("""
+            SELECT firm_id, name
+            FROM firms
+            WHERE owner_id = ?
+        """, (owner_id,)).fetchone()
+
+        if firm is None:
+            raise ValueError("You do not own a firm.")
+
+        firm_id = firm["firm_id"]
+        firm_name = firm["name"]
+
+        # Delete firm-owned crystal inventory
+        conn.execute("""
+            DELETE FROM crystal_inventory
+            WHERE owner_type = 'firm'
+              AND owner_id = ?
+        """, (firm_id,))
+
+        # Delete the firm itself.
+        # ON DELETE CASCADE removes memberships and invitations.
+        conn.execute("""
+            DELETE FROM firms
+            WHERE firm_id = ?
+              AND owner_id = ?
+        """, (firm_id, owner_id))
+
+        return firm_name
+
+
+def rename_firm(owner_id: int, new_name: str) -> tuple[str, str]:
+# Returns (old_name, new_name).
+
+    new_name = validate_firm_name(new_name)
+
+    with get_connection() as conn:
+        firm = conn.execute("""
+            SELECT firm_id, name
+            FROM firms
+            WHERE owner_id = ?
+        """, (owner_id,)).fetchone()
+
+        if firm is None:
+            raise ValueError("You do not own a firm.")
+
+        old_name = firm["name"]
+
+        if old_name.casefold() == new_name.casefold():
+            raise ValueError("Your firm already has that name.")
+
+        # Prevent duplicate names regardless of capitalization
+        existing = conn.execute("""
+            SELECT 1
+            FROM firms
+            WHERE name = ? COLLATE NOCASE
+              AND firm_id != ?
+        """, (new_name, firm["firm_id"])).fetchone()
+
+        if existing is not None:
+            raise ValueError("A firm with that name already exists.")
+
+        try:
+            conn.execute("""
+                UPDATE firms
+                SET name = ?
+                WHERE firm_id = ?
+            """, (new_name, firm["firm_id"]))
+
+        except sqlite3.IntegrityError as error:
+            raise ValueError(
+                "Unable to rename firm. That name may already be taken."
+            ) from error
+
+        return old_name, new_name

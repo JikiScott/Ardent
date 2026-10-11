@@ -1,3 +1,4 @@
+-- schema.sql
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS users (
@@ -116,4 +117,10 @@ CREATE TABLE IF NOT EXISTS treasury_transactions (
     FOREIGN KEY (firm_id)
         REFERENCES firms(firm_id)
         ON DELETE SET NULL
+);
+
+-- MIGRATE
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    migration_name TEXT PRIMARY KEY,
+    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
