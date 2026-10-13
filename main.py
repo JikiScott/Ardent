@@ -31,10 +31,43 @@ from db1.db import (
     dismiss_firm_member,
     disband_firm,
     rename_firm,
+    get_treasury_balance
 )
 from econ.mine import mine
 import time
 from econ.currency import format_currency, to_farthings
+
+# Shared embed helpers. All Ardent messages use one visual style.
+def make_embed(*, title=None, description=None, color=None, fields=None, footer=None):
+    embed = discord.Embed(
+        title=title, description=description,
+        color=color if color is not None else discord.Color.red()
+    )
+    for name, value, inline in (fields or []):
+        embed.add_field(name=str(name), value=str(value), inline=inline)
+    if footer:
+        embed.set_footer(text=footer)
+    return embed
+
+
+async def send_embed(ctx, *, title=None, description=None, color=None,
+                     fields=None, footer=None, view=None):
+    await ctx.send(
+        embed=make_embed(title=title, description=description, color=color,
+                         fields=fields, footer=footer),
+        view=view, allowed_mentions=discord.AllowedMentions.none()
+    )
+
+
+async def send_notice(ctx, message, *, error=False):
+    await send_embed(ctx, description=message,
+                     color=discord.Color.dark_red() if error else discord.Color.red())
+
+
+async def send_cooldown(ctx, action, retry_after):
+    timestamp = int(time.time() + retry_after)
+    await send_notice(ctx, f"{ctx.author.mention}, you can {action} again <t:{timestamp}:R>.")
+
 
 initialize_database()
 load_dotenv()
@@ -120,38 +153,21 @@ async def on_message(message):
 async def work(ctx):
     result = work_user(ctx.author.id)
 
-    embed = discord.Embed(
+    await send_embed(
+        ctx,
         title="🔥 Work Complete! 🔥",
         description=f"*{ctx.author.mention} has completed a shift!*",
-        color=discord.Color.red()
-    )
-
-    embed.add_field(
-        name="***Wages Earned***",
-        value=format_currency(result["wage"]),
-        inline=True
-    )
-
-    embed.add_field(
-        name="***New Balance***",
-        value=format_currency(result["balance"]),
-        inline=True
-    )
-
-    await ctx.send(
-        embed=embed,
-        allowed_mentions=discord.AllowedMentions.none()
+        fields=[
+            ("***Wages Earned***", format_currency(result["wage"]), True),
+            ("***New Balance***", format_currency(result["balance"]), True),
+        ],
     )
 
 
 @work.error
 async def work_error(ctx, error):
     if isinstance(error, commands.CommandOnCooldown):
-        retry_timestamp = int(time.time() + error.retry_after)
-        await ctx.send(
-            f"{ctx.author.mention}, you can work again in "
-            f"<t:{retry_timestamp}:R>."
-        )
+        await send_cooldown(ctx, "work", error.retry_after)
     else:
         raise error
 
@@ -159,7 +175,7 @@ async def work_error(ctx, error):
 async def balance(ctx):
     current_balance = get_balance(ctx.author.id)
 
-    embed = discord.Embed(
+    embed = make_embed(
         title="*Arderian Holdings*",
         description=(
             f"**User:** {ctx.author.mention}\n"
@@ -172,12 +188,12 @@ async def balance(ctx):
 @bot.command(name="pay")
 async def pay(ctx, member: discord.Member, amount: int, denomination: str = "sovereign"):    # Prevent payments to bots
     if member.bot:
-        await ctx.send("You cannot send money to bots.")
+        await send_notice(ctx, "You cannot send money to bots.")
         return
 
     # Prevent self-transfers
     if member.id == ctx.author.id:
-        await ctx.send("You cannot pay yourself.")
+        await send_notice(ctx, "You cannot pay yourself.")
         return
 
     # Convert into farthings
@@ -195,10 +211,10 @@ async def pay(ctx, member: discord.Member, amount: int, denomination: str = "sov
         )
 
     except ValueError as error:
-        await ctx.send(f"Payment failed: {error}")
+        await send_notice(ctx, f"Payment failed: {error}")
         return
     # Confirmation embed
-    embed = discord.Embed(
+    embed = make_embed(
         title="*Arderian Holdings Transfer*",
         description="Payment completed successfully.",
         color=discord.Color.gold()
@@ -231,7 +247,7 @@ async def pay(ctx, member: discord.Member, amount: int, denomination: str = "sov
 @pay.error
 async def pay_error(ctx, error):
     if isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send("Usage: `.pay @user <amount>`")
+        await send_notice(ctx, "Usage: `.pay @user <amount>`")
 
     elif isinstance(error, commands.MemberNotFound):
         await ctx.send(
@@ -254,9 +270,9 @@ async def job(ctx):
 # #     if (amount <= assets[ctx.author.id][0]) and (amount > 0):
 # #         assets[ctx.author.id][0] -= amount
 # #         assets[user.id][0] += amount
-#         await ctx.send(f"{ctx.author.mention}, you transferred {amount} to {user.mention}.")
+#         await send_notice(ctx, f"{ctx.author.mention}, you transferred {amount} to {user.mention}.")
 #     else:
-#         await ctx.send(f"{ctx.author.mention}, invalid transfer!")
+#         await send_notice(ctx, f"{ctx.author.mention}, invalid transfer!")
 
 # @bot.command()
 # async def coin(ctx, guess, wager: int):
@@ -266,14 +282,14 @@ async def job(ctx):
 #         flip = random.choice(cointoss)
 #
 #         if flip == guess:
-#             await ctx.send(f"{ctx.author.mention}, you correctly guessed {guess} and thus have won 🔥${wager}🔥!")
+#             await send_notice(ctx, f"{ctx.author.mention}, you correctly guessed {guess} and thus have won 🔥${wager}🔥!")
 # #             assets[ctx.author.id][0] += wager
 #         else:
-#             await ctx.send(f"{ctx.author.mention}, you made an incorrect guess and thus have lost ${wager}.")
+#             await send_notice(ctx, f"{ctx.author.mention}, you made an incorrect guess and thus have lost ${wager}.")
 # #             assets[ctx.author.id][0] -= wager
 # #         write = f"{ctx.author.id} {assets[ctx.author.id][0]} {assets[ctx.author.id][1]} "
 #     else:
-#         await ctx.send(f"{ctx.author.mention}, invalid wager!")
+#         await send_notice(ctx, f"{ctx.author.mention}, invalid wager!")
 # Legacy gamba
 #
 # Gamba add:
@@ -304,17 +320,17 @@ async def coin(
         balance_display = format_currency(new_balance)
 
         if won:
-            embed = discord.Embed(
+            embed = make_embed(
                 title="🫴🪙 Coin Flip: 🔥 WINNER! 🔥",
                 description=(
                     f"*The coin landed on **{result.title()}**!*\n\n"
                     f"{ctx.author.mention} won "
-                    f"🔥**{wager_display}**🔥!"
+                    f"🔥 **{wager_display}** 🔥!"
                 ),
                 color=discord.Color.red()
             )
         else:
-            embed = discord.Embed(
+            embed = make_embed(
                 title="🫴🪙 Coin Flip: Loss",
                 description=(
                     f"*The coin landed on **{result.title()}**!*\n\n"
@@ -344,20 +360,10 @@ async def coin(
 @coin.error
 async def coin_error(ctx, error):
     if isinstance(error, commands.CommandOnCooldown):
-        await ctx.send(
-            f"{ctx.author.mention}, you can flip a coin again in "
-            f"🔥{error.retry_after:.0f} seconds.🔥"
-        )
+        await send_cooldown(ctx, "flip a coin", error.retry_after)
     else:
-        logging.exception(
-            "Coin command failed",
-            exc_info=(type(error), error, error.__traceback__)
-        )
-        await ctx.send(
-            f"Coin flip failed: `{type(error).__name__}`. "
-            "Check the bot logs."
-        )
-
+        logging.exception("Coin command failed", exc_info=(type(error), error, error.__traceback__))
+        await send_notice(ctx, f"Coin flip failed: `{type(error).__name__}`. Check the bot logs.", error=True)
 
 # MINING START
 @bot.command(name="mine")
@@ -366,18 +372,13 @@ async def mine_command(ctx):
     firm = get_user_firm(ctx.author.id)
 
     if firm is None:
-        await ctx.send(
-            f"{ctx.author.mention}, you must be employed by a firm to work."
-        )
+        await send_notice(ctx, f"{ctx.author.mention}, you must be employed by a firm to mine.", error=True)
         return
 
     result = mine()
 
     if result.crystal_class is None:
-        await ctx.send(
-            f"{ctx.author.mention} completed a mining shift for "
-            f"**{firm['name']}**, but no crystals were recovered."
-        )
+        await send_notice(ctx, f"{ctx.author.mention} completed a mining shift for **{firm['name']}**, but no crystals were recovered.")
         return
 
     new_balance = add_crystals(
@@ -388,20 +389,20 @@ async def mine_command(ctx):
         result.quantity
     )
 
-    await ctx.send(
-        f"{ctx.author.mention} mined **{result.quantity} stone of "
-        f"{result.grade.title()} {result.crystal_class.title()} crystal** "
-        f"for **{firm['name']}**.\n"
-        f"Firm inventory now holds **{new_balance} stone** of this crystal."
+    await send_embed(
+        ctx, title="🔥 Mining Shift Complete 🔥",
+        description=(
+            f"{ctx.author.mention} mined **{result.quantity} stone of "
+            f"{result.grade.title()} {result.crystal_class.title()} crystal** "
+            f"for **{firm['name']}**."
+        ),
+        fields=[("Firm Inventory", f"**{new_balance} stone** of this crystal", False)],
     )
 
 @mine_command.error
 async def mine_error(ctx, error):
     if isinstance(error, commands.CommandOnCooldown):
-        await ctx.send(
-            f"{ctx.author.mention}, you can mine again in "
-            f"{error.retry_after:.0f} seconds."
-        )
+        await send_cooldown(ctx, "mine", error.retry_after)
     else:
         raise error
 
@@ -422,7 +423,7 @@ async def inventory(ctx):
         firm["firm_id"]
     )
 
-    embed = discord.Embed(
+    embed = make_embed(
         title=f"🔥 {firm['name']}: *Crystal Inventory* 🔥",
         description=f"-# Firm ID: `{firm['firm_id']}`",
         color=discord.Color.dark_gold()
@@ -456,13 +457,28 @@ async def inventory(ctx):
 # FIRM START
 @bot.group(invoke_without_command=True)
 async def firm(ctx):
-    await ctx.send(
-        "Firm commands:\n"
-        "`.firm create <name>` - Create a firm\n"
-        "`.firm info` - View your current firm"
+    embed = make_embed(
+        title="🔥 Firm Commands 🔥",
+        description="*Available firm management commands:*",
+        color=discord.Color.red()
     )
 
-@firm.command(name="create")
+    for command in sorted(firm.commands, key=lambda cmd: cmd.name):
+        if command.hidden:
+            continue
+
+        embed.add_field(
+            name=f"`{ctx.prefix}{command.qualified_name} {command.signature}`".strip(),
+            value=command.brief or command.help or "",
+            inline=False
+        )
+
+    await ctx.send(
+        embed=embed,
+        allowed_mentions=discord.AllowedMentions.none()
+    )
+
+@firm.command(name="create", help="Create a new firm.")
 async def firm_create(ctx, *, name: str):
     existing_firm = get_user_firm(ctx.author.id)
 
@@ -505,7 +521,7 @@ async def firm_create_error(ctx, error):
         raise error
 
 
-@firm.command(name="info")
+@firm.command(name="info", help="Show firm information.")
 async def firm_info(ctx):
     user_id = ctx.author.id
 
@@ -527,8 +543,8 @@ async def firm_info(ctx):
         if member["role"] != "owner"
     )
 
-    embed = discord.Embed(
-        title=f"🔥`{firm_name}`🔥",
+    embed = make_embed(
+        title=f"🔥 `{firm_name}` 🔥",
         description=f"Firm ID: `{firm_id}`",
         color=discord.Color.red()
     )
@@ -556,22 +572,22 @@ async def firm_info(ctx):
         allowed_mentions=discord.AllowedMentions.none()
     )
 
-@firm.command(name="hire")
+@firm.command(name="hire", help="Hire a firm employee.")
 async def firm_hire(ctx, member: discord.Member):
     firm_data = get_user_firm(ctx.author.id)
 
     if firm_data is None:
-        await ctx.send("You must have a firm to hire employees.")
+        await send_notice(ctx, "You must have a firm to hire employees.")
         return
 
     # Only firm owners
     if firm_data["owner_id"] != ctx.author.id:
-        await ctx.send("Only the owner of the firm can hire employees.")
+        await send_notice(ctx, "Only the owner of the firm can hire employees.")
         return
 
     # Reject bots
     if member.bot:
-        await ctx.send("You cannot hire bots.")
+        await send_notice(ctx, "You cannot hire bots.")
         return
 
     # Create invite
@@ -582,42 +598,229 @@ async def firm_hire(ctx, member: discord.Member):
             member.id
         )
     except ValueError as error:
-        await ctx.send(f"Unable to hire employee: {error}")
+        await send_notice(ctx, f"Unable to hire employee: {error}")
         return
 
+
+    # Build embed
+    embed = make_embed(
+        description=f"# FIRM INVITATION\n"
+                    f"🔥 **{member.mention}** has been invited to join "
+                    f"**{firm_data['name']}**! 🔥\n",
+        color=discord.Color.red()
+    )
+
+    embed.add_field(
+        name="*To accept...*",
+        value=f"`.firm accept {firm_data['firm_id']}`",
+        inline=True
+    )
+
+    embed.add_field(
+        name="*To decline...*",
+        value=f"`.firm decline {firm_data['firm_id']}`",
+        inline=True
+    )
+    embed.add_field(
+        name="*To view more info...*",
+        value=f"`.firm invites`",
+        inline=True
+    )
     # Confirm invitation
     await ctx.send(
-        f"🔥**{member.display_name}** has been invited to join "
-        f"**{firm_data['name']}**!🔥\n"
-        f"You can accept with "
-        f"`.firm accept {firm_data['firm_id']}`.",
+        embed=embed,
         allowed_mentions=discord.AllowedMentions.none()
     )
 
-@firm.command(name="invites")
+class SmartInvite(discord.ui.View):
+    def __init__(self, owner_id: int, firm_id: int):
+        super().__init__(timeout=60)
+        self.owner_id = owner_id
+        self.firm_id = firm_id
+
+    async def interaction_check(self, interaction: discord.Interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "Only the invite recipient can respond.",
+                ephemeral=True
+            )
+            return False
+
+        return True
+
+    async def finish(self, interaction, description, title=None):
+        for item in self.children:
+            item.disabled = True
+
+        embed = make_embed(
+            title=title,
+            description=description,
+            color=discord.Color.red()
+        )
+
+        await interaction.response.edit_message(
+            content=None,
+            embed=embed,
+            view=self
+        )
+
+        self.stop()
+
+    @discord.ui.button(
+        label="Accept Invite",
+        style=discord.ButtonStyle.success,
+        emoji="☑️"
+    )
+    async def confirm(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        try:
+            firm_name = accept_firm_invite(
+                interaction.user.id,
+                self.firm_id
+            )
+
+        except ValueError as error:
+            await interaction.response.send_message(
+                str(error),
+                ephemeral=True
+            )
+            return
+
+        firm_data = get_user_firm(interaction.user.id)
+        job_title = firm_data["role"].title()
+
+        await self.finish(
+            interaction,
+            title=f"🔥 {interaction.user.display_name} has joined {firm_name}! 🔥",
+            description=f"***New Role:*** `{job_title}`"
+        )
+
+    @discord.ui.button(
+        label="Decline Invite",
+        style=discord.ButtonStyle.danger,
+        emoji="🇽"
+    )
+    async def decline(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        # Get the firm name before deleting the invitation
+        invites = get_firm_invites(interaction.user.id)
+
+        firm_name = next(
+            (
+                invite["name"]
+                for invite in invites
+                if invite["firm_id"] == self.firm_id
+            ),
+            f"Firm #{self.firm_id}"
+        )
+
+        try:
+            decline_firm_invite(
+                interaction.user.id,
+                self.firm_id
+            )
+
+        except ValueError as error:
+            await interaction.response.send_message(
+                str(error),
+                ephemeral=True
+            )
+            return
+
+        await self.finish(
+            interaction,
+            f"*{interaction.user.display_name} has declined "
+            f"employment with **{firm_name}**.*"
+        )
+
+    async def on_timeout(self):
+        # Disable buttons after 60 seconds
+        for item in self.children:
+            item.disabled = True
+
+        if hasattr(self, "message"):
+            try:
+                await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
+
+    @discord.ui.button(
+        label="Cancel",
+        style=discord.ButtonStyle.secondary
+    )
+    async def cancel(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "Only the firm owner can cancel this request.",
+                ephemeral=True
+            )
+            return
+
+        for item in self.children:
+            item.disabled = True
+
+        embed = make_embed(
+            title="Firm Disbandment Cancelled",
+            description="Your firm has been preserved. No changes were made.",
+            color=discord.Color.green()
+        )
+
+        await interaction.response.edit_message(
+            content=None,
+            embed=embed,
+            view=self
+        )
+
+        self.stop()
+
+@firm.command(name="invites", help="View firm invites.")
 async def firm_invites(ctx):
     invites = get_firm_invites(ctx.author.id)
 
     if not invites:
-        await ctx.send("You have no pending employment invitations.")
+        await send_notice(
+            ctx,
+            "You have no pending employment invitations."
+        )
         return
 
-    message = "🔥**Pending Employment Invitations:**🔥\n"
-
     for invite in invites:
-        message += (
-            f"\n- **{invite['name']}** \n"
-            f"-# (*Firm ID: `{invite['firm_id']}`*)\n"
-            f"To Accept: `.firm accept {invite['firm_id']}`\n"
-            f"To Decline: `.firm decline {invite['firm_id']}`\n"
+        embed = make_embed(
+            title="🔥 Employment Invitation 🔥",
+            description=(
+                f"You have been invited to join "
+                f"**{invite['name']}**!\n"
+                f"-# Firm ID: `{invite['firm_id']}`\n\n"
+                f"***Offered Position:*** `Laborer`"
+            ),
+            color=discord.Color.red()
         )
 
-    await ctx.send(
-        message,
-        allowed_mentions=discord.AllowedMentions.none()
-    )
+        view = SmartInvite(
+            owner_id=ctx.author.id,
+            firm_id=invite["firm_id"]
+        )
 
-@firm.command(name="accept")
+        message = await ctx.send(
+            embed=embed,
+            view=view,
+            allowed_mentions=discord.AllowedMentions.none()
+        )
+
+        # Save the message so the view can disable buttons on timeout
+        view.message = message
+
+@firm.command(name="accept", help="Accept an invitation to a firm.")
 async def firm_accept(ctx, firm_id: int):
     try:
         firm_name = accept_firm_invite(
@@ -626,18 +829,28 @@ async def firm_accept(ctx, firm_id: int):
         )
 
     except ValueError as error:
-        await ctx.send(f"Unable to accept invitation: {error}")
+        await send_notice(ctx, f"Unable to accept invitation: {error}")
         return
 
+    # Get new firm info
+    firm_data = get_user_firm(ctx.author.id)
+    job_title = firm_data["role"].title()
+
+    # Build embed
+    embed = make_embed(
+        description=f"#🔥 {ctx.author.mention} has joined {firm_name}! 🔥"
+                    f"***New Role:*** `{job_title}`",
+        color=discord.Color.red()
+    )
+
     await ctx.send(
-        f"🔥**{ctx.author.display_name}** has joined "
-        f"**{firm_name}** as a laborer!🔥",
+        embed=embed,
         allowed_mentions=discord.AllowedMentions.none()
     )
 @firm_accept.error
 async def firm_accept_error(ctx, error):
     if isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send("Usage: `.firm accept <firm_id>`")
+        await send_notice(ctx, "Usage: `.firm accept <firm_id>`")
 
     elif isinstance(error, commands.BadArgument):
         await ctx.send(
@@ -648,8 +861,16 @@ async def firm_accept_error(ctx, error):
         raise error
 
 
-@firm.command(name="decline")
+@firm.command(name="decline", help="Decline an invitation to a firm.")
 async def firm_decline(ctx, firm_id: int):
+    # Find the invitation before deleting it
+    invites = get_firm_invites(ctx.author.id)
+
+    firm_name = next(
+        (invite["name"] for invite in invites if invite["firm_id"] == firm_id),
+        None
+    )
+
     try:
         decline_firm_invite(
             ctx.author.id,
@@ -657,17 +878,25 @@ async def firm_decline(ctx, firm_id: int):
         )
 
     except ValueError as error:
-        await ctx.send(f"Unable to decline invitation: {error}")
+        await send_notice(ctx, f"Unable to decline invitation: {error}")
         return
 
-    await ctx.send(
-        f"Employment invitation from firm `{firm_id}` declined."
+    # Build description-only embed
+    embed = make_embed(
+        description=(
+            f"*{ctx.author.display_name} has declined employment with **{firm_name or f'Firm #{firm_id}'}**.*"
+        ),
+        color=discord.Color.red()
     )
 
+    await ctx.send(
+        embed=embed,
+        allowed_mentions=discord.AllowedMentions.none()
+    )
 @firm_decline.error
 async def firm_decline_error(ctx, error):
     if isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send("Usage: `.firm decline <firm_id>`")
+        await send_notice(ctx, "Usage: `.firm decline <firm_id>`")
 
     elif isinstance(error, commands.BadArgument):
         await ctx.send(
@@ -677,41 +906,28 @@ async def firm_decline_error(ctx, error):
     else:
         raise error
 
-@firm.command(name="leave")
+@firm.command(name="leave", help="Leave a firm.")
 async def firm_leave(ctx):
     try:
         firm_name = leave_firm(ctx.author.id)
-
     except ValueError as error:
-        await ctx.send(f"Unable to leave firm: {error}")
+        await send_notice(ctx, f"Unable to leave firm: {error}", error=True)
         return
+    await send_notice(ctx, f"*{ctx.author.mention} has left **{firm_name}**.*")
 
-    await ctx.send(
-        f"**{ctx.author.display_name}** has left **{firm_name}**.",
-        allowed_mentions=discord.AllowedMentions.none()
-    )
-
-@firm.command(name="dismiss")
+@firm.command(name="dismiss", help="Dismiss an employee from your firm.")
 async def firm_dismiss(ctx, member: discord.Member):
     try:
-        firm_name = dismiss_firm_member(
-            ctx.author.id,
-            member.id
-        )
-
+        firm_name = dismiss_firm_member(ctx.author.id, member.id)
     except ValueError as error:
-        await ctx.send(f"Unable to dismiss employee: {error}")
+        await send_notice(ctx, f"Unable to dismiss employee: {error}", error=True)
         return
+    await send_notice(ctx, f"*{member.display_name} has been dismissed from **{firm_name}**.*")
 
-    await ctx.send(
-        f"**{member.display_name}** has been dismissed "
-        f"from **{firm_name}**.",
-        allowed_mentions=discord.AllowedMentions.none()
-    )
 @firm_dismiss.error
 async def firm_dismiss_error(ctx, error):
     if isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send("Usage: `.firm dismiss @user`")
+        await send_notice(ctx, "Usage: `.firm dismiss @user`")
 
     elif isinstance(error, commands.MemberNotFound):
         await ctx.send(
@@ -721,13 +937,13 @@ async def firm_dismiss_error(ctx, error):
     else:
         raise error
 
-@firm.command(name="members")
+@firm.command(name="members", help="View firm members.")
 async def firm_members(ctx):
     # Find the user's firm
     firm_data = get_user_firm(ctx.author.id)
 
     if firm_data is None:
-        await ctx.send("You are not currently employed by a firm.")
+        await send_notice(ctx, "You are not currently employed by a firm.")
         return
 
     firm_id = firm_data["firm_id"]
@@ -749,7 +965,7 @@ async def firm_members(ctx):
             laborers.append(mention)
 
     # Build embed
-    embed = discord.Embed(
+    embed = make_embed(
         title=f"{firm_name}: *Members*",
         description=f"-# Firm ID: `{firm_id}`",
         color=discord.Color.red()
@@ -813,7 +1029,7 @@ class ConfirmDisband(discord.ui.View):
             item.disabled = True
 
         # Create confirmation embed
-        embed = discord.Embed(
+        embed = make_embed(
             description=(
                 "# FIRM DISBANDED\n"
                 f"**{firm_name}** has been permanently disbanded.\n\n"
@@ -856,7 +1072,7 @@ class ConfirmDisband(discord.ui.View):
         for item in self.children:
             item.disabled = True
 
-        embed = discord.Embed(
+        embed = make_embed(
             title="Firm Disbandment Cancelled",
             description="Your firm has been preserved. No changes were made.",
             color=discord.Color.green()
@@ -871,19 +1087,19 @@ class ConfirmDisband(discord.ui.View):
         self.stop()
 
 
-@firm.command(name="disband")
+@firm.command(name="disband", help="Disband a firm.")
 async def firm_disband(ctx):
     firm_data = get_user_firm(ctx.author.id)
 
     if firm_data is None:
-        await ctx.send("You do not belong to a firm.")
+        await send_notice(ctx, "You do not belong to a firm.")
         return
 
     if firm_data["owner_id"] != ctx.author.id:
-        await ctx.send("Only the firm owner can disband a firm.")
+        await send_notice(ctx, "Only the firm owner can disband a firm.")
         return
 
-    embed = discord.Embed(
+    embed = make_embed(
         description=(
             f"# DISBAND FIRM?\n"
             f"Are you sure you want to permanently disband "
@@ -903,7 +1119,7 @@ async def firm_disband(ctx):
     )
 
 
-@firm.command(name="rename")
+@firm.command(name="rename", help="Rename your firm.")
 async def firm_rename(ctx, *, new_name: str):
     try:
         old_name, updated_name = rename_firm(
@@ -912,10 +1128,10 @@ async def firm_rename(ctx, *, new_name: str):
         )
 
     except ValueError as error:
-        await ctx.send(f"Unable to rename firm: {error}")
+        await send_notice(ctx, f"Unable to rename firm: {error}")
         return
 
-    embed = discord.Embed(
+    embed = make_embed(
         title="🔥 Firm Renamed 🔥",
         description=(
             "Your firm has been successfully renamed!"
@@ -955,5 +1171,47 @@ async def firm_rename_error(ctx, error):
         raise error
 
 # FIRM END
+# TREASURY START
+
+@bot.group(name="treasury", invoke_without_command=True)
+async def treasury(ctx):
+#  Treasury management.
+
+    await send_notice(
+        ctx,
+        "Use `.treasury help` to view Treasury commands."
+    )
+
+@treasury.command(name="balance", help="View Treasury balance.")
+async def treasury_balance(ctx):
+    balance = get_treasury_balance()
+
+    await send_embed(
+        ctx,
+        title="Arderian Treasury Report",
+        description=f"**Available Funds:** {format_currency(balance)}",
+        color=discord.Color.gold()
+    )
+
+@treasury.command(name="help", help="List Treasury commands.")
+async def treasury_help(ctx):
+    fields = []
+
+    for command in sorted(treasury.commands, key=lambda c: c.name):
+        if command.hidden:
+            continue
+
+        fields.append((
+            f".{command.qualified_name} {command.signature}".strip(),
+            command.help or "No description available.",
+            False
+        ))
+
+    await send_embed(
+        ctx,
+        title="Treasury Command List",
+        fields=fields,
+        color=discord.Color.gold()
+    )
 
 bot.run(token, log_handler=handler, log_level=logging.DEBUG)

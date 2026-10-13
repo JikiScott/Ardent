@@ -355,12 +355,7 @@ def add_crystals(
     return new_quantity
 
 def pay_mining_wage(user_id: int, firm_id: int, amount: int) -> int:
-    """
-    Pay a mining wage from the Treasury.
-
-    Amount is expressed in farthings.
-    Returns the amount paid.
-    """
+# Pay a mining wage from the Treasury in farthings, returns amount paid
     if type(amount) is not int or amount <= 0:
         raise ValueError("Mining wage must be a positive whole number of farthings.")
 
@@ -419,6 +414,79 @@ def pay_mining_wage(user_id: int, firm_id: int, amount: int) -> int:
             user_id,
             firm_id
         ))
+
+        return amount
+
+def get_treasury_balance() -> int:
+    with get_connection() as conn:
+        treasury = conn.execute(
+            """
+            SELECT balance
+            FROM treasury
+            WHERE treasury_id = 1
+            """
+        ).fetchone()
+
+        if treasury is None:
+            raise ValueError("Treasury account not found.")
+
+        return treasury["balance"]
+
+def transfer_treasury_to_firm(firm_id: int, amount: int) -> int:
+# Transfer from treasury to firm in farthing, does not mint new currency, returns amount transferred
+    if type(amount) is not int or amount <= 0:
+        raise ValueError(
+            "Transfer amount must be a positive whole number in farthings."
+        )
+
+    with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+
+        # Deduct funds from Treasury if sufficient balance exists.
+        cursor = conn.execute(
+            """
+            UPDATE treasury
+            SET balance = balance - ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE treasury_id = 1
+              AND balance >= ?
+            """,
+            (amount, amount)
+        )
+
+        if cursor.rowcount != 1:
+            raise ValueError(
+                "The Arderian Treasury has insufficient funds."
+            )
+
+        # Credit the firm's financial account.
+        cursor = conn.execute(
+            """
+            UPDATE firm_accounts
+            SET balance = balance + ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE firm_id = ?
+            """,
+            (amount, firm_id)
+        )
+
+        if cursor.rowcount != 1:
+            raise ValueError(
+                "Firm financial account not found."
+            )
+
+        # Record the Treasury expenditure.
+        conn.execute(
+            """
+            INSERT INTO treasury_transactions (
+                amount,
+                transaction_type,
+                firm_id
+            )
+            VALUES (?, ?, ?)
+            """,
+            (amount, "firm_transfer", firm_id)
+        )
 
         return amount
 
@@ -481,9 +549,10 @@ def validate_firm_name(name: str) -> str:
 def create_firm(owner_id: int, name: str):
 
     name = validate_firm_name(name)
-    #From above
+
     try:
         with get_connection() as conn:
+            # Ensure owner exists
             conn.execute(
                 """
                 INSERT OR IGNORE INTO users (user_id)
@@ -492,6 +561,7 @@ def create_firm(owner_id: int, name: str):
                 (owner_id,)
             )
 
+            # Create the firm
             cursor = conn.execute(
                 """
                 INSERT INTO firms (name, owner_id)
@@ -502,6 +572,16 @@ def create_firm(owner_id: int, name: str):
 
             firm_id = cursor.lastrowid
 
+            # Create the firm's financial account
+            conn.execute(
+                """
+                INSERT INTO firm_accounts (firm_id)
+                VALUES (?)
+                """,
+                (firm_id,)
+            )
+
+            # Register the owner as a firm member
             conn.execute(
                 """
                 INSERT INTO firm_members (firm_id, user_id, role)
@@ -511,6 +591,7 @@ def create_firm(owner_id: int, name: str):
             )
 
             return firm_id
+
     except sqlite3.IntegrityError as error:
         if "firms.name" in str(error):
             raise ValueError(
@@ -524,6 +605,21 @@ def create_firm(owner_id: int, name: str):
 
         raise
 
+def get_firm_balance(firm_id: int) -> int:
+    with get_connection() as conn:
+        account = conn.execute(
+            """
+            SELECT balance
+            FROM firm_accounts
+            WHERE firm_id = ?
+            """,
+            (firm_id,)
+        ).fetchone()
+
+        if account is None:
+            raise ValueError("Firm financial account not found.")
+
+        return account["balance"]
 
 def get_user_firm(user_id: int):
     with get_connection() as conn:
@@ -791,7 +887,23 @@ def disband_firm(owner_id: int) -> str:
 
         firm_id = firm["firm_id"]
         firm_name = firm["name"]
+        #Conserve money
+        account = conn.execute(
+            """
+            SELECT balance
+            FROM firm_accounts
+            WHERE firm_id = ?
+            """,
+            (firm_id,)
+        ).fetchone()
 
+        if account is None:
+            raise ValueError("This firm has no financial account.")
+
+        if account["balance"] > 0:
+            raise ValueError(
+                "Your firm must spend all cash before disbanding."
+            )
         # Delete firm-owned crystal inventory
         conn.execute("""
             DELETE FROM crystal_inventory

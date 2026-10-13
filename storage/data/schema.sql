@@ -124,3 +124,81 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     migration_name TEXT PRIMARY KEY,
     applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- FIRM FINANCIAL ACCOUNTS
+CREATE TABLE IF NOT EXISTS firm_accounts (
+    firm_id INTEGER PRIMARY KEY,
+
+    balance INTEGER NOT NULL DEFAULT 0
+        CHECK (balance >= 0),
+
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (firm_id)
+        REFERENCES firms(firm_id)
+        ON DELETE CASCADE
+);
+
+-- TREASURY CRYSTAL PURCHASES
+CREATE TABLE IF NOT EXISTS treasury_crystal_purchases (
+    purchase_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    firm_id INTEGER NOT NULL,
+
+    crystal_class TEXT NOT NULL,
+    grade TEXT NOT NULL,
+
+    quantity TEXT NOT NULL,
+
+    price_paid INTEGER NOT NULL
+        CHECK (price_paid > 0),
+
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (firm_id)
+        REFERENCES firms(firm_id)
+        ON DELETE RESTRICT
+);
+
+-- TREASURY PURCHASE ORDERS
+CREATE TABLE IF NOT EXISTS treasury_purchase_orders (
+    order_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    crystal_class TEXT NOT NULL,
+    grade TEXT NOT NULL,
+
+    quantity_total TEXT NOT NULL,
+    quantity_remaining TEXT NOT NULL,
+
+    price_per_stone INTEGER NOT NULL
+        CHECK (price_per_stone > 0),
+
+    created_by INTEGER NOT NULL,
+
+    status TEXT NOT NULL DEFAULT 'open'
+        CHECK (status IN ('open', 'completed', 'cancelled')),
+
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- TREASURY PURCHASE FULFILLMENTS
+CREATE TABLE IF NOT EXISTS treasury_purchase_fulfillments (
+    fulfillment_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    order_id INTEGER NOT NULL,
+    firm_id INTEGER NOT NULL,
+
+    quantity TEXT NOT NULL,
+
+    amount_paid INTEGER NOT NULL
+        CHECK (amount_paid > 0),
+
+    fulfilled_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (order_id)
+        REFERENCES treasury_purchase_orders(order_id),
+
+    FOREIGN KEY (firm_id)
+        REFERENCES firms(firm_id)
+);
