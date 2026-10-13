@@ -124,3 +124,38 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     migration_name TEXT PRIMARY KEY,
     applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- FIRM FINANCIAL ACCOUNTS
+CREATE TABLE IF NOT EXISTS firm_accounts (
+    firm_id INTEGER PRIMARY KEY,
+
+    balance INTEGER NOT NULL DEFAULT 0
+        CHECK (balance >= 0),
+
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (firm_id)
+        REFERENCES firms(firm_id)
+        ON DELETE CASCADE
+);
+
+-- TREASURY CRYSTAL PURCHASES
+CREATE TABLE IF NOT EXISTS treasury_crystal_purchases (
+    purchase_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    firm_id INTEGER NOT NULL,
+
+    crystal_class TEXT NOT NULL,
+    grade TEXT NOT NULL,
+
+    quantity TEXT NOT NULL,
+
+    price_paid INTEGER NOT NULL
+        CHECK (price_paid > 0),
+
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (firm_id)
+        REFERENCES firms(firm_id)
+        ON DELETE RESTRICT
+);

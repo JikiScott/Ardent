@@ -481,9 +481,10 @@ def validate_firm_name(name: str) -> str:
 def create_firm(owner_id: int, name: str):
 
     name = validate_firm_name(name)
-    #From above
+
     try:
         with get_connection() as conn:
+            # Ensure owner exists
             conn.execute(
                 """
                 INSERT OR IGNORE INTO users (user_id)
@@ -492,6 +493,7 @@ def create_firm(owner_id: int, name: str):
                 (owner_id,)
             )
 
+            # Create the firm
             cursor = conn.execute(
                 """
                 INSERT INTO firms (name, owner_id)
@@ -502,6 +504,16 @@ def create_firm(owner_id: int, name: str):
 
             firm_id = cursor.lastrowid
 
+            # Create the firm's financial account
+            conn.execute(
+                """
+                INSERT INTO firm_accounts (firm_id)
+                VALUES (?)
+                """,
+                (firm_id,)
+            )
+
+            # Register the owner as a firm member
             conn.execute(
                 """
                 INSERT INTO firm_members (firm_id, user_id, role)
@@ -511,6 +523,7 @@ def create_firm(owner_id: int, name: str):
             )
 
             return firm_id
+
     except sqlite3.IntegrityError as error:
         if "firms.name" in str(error):
             raise ValueError(
@@ -523,7 +536,6 @@ def create_firm(owner_id: int, name: str):
             ) from error
 
         raise
-
 
 def get_user_firm(user_id: int):
     with get_connection() as conn:

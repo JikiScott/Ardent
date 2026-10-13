@@ -26,16 +26,69 @@ DENOMINATIONS = {
     "sovereign": 960,
 }
 
+DENOMINATION_ALIASES = {
+    # Farthings
+    "f": "farthing",
+    "farthings": "farthing",
+
+    # Halfpennies
+    "hp": "halfpenny",
+    "h": "halfpenny",
+    "halfpennies": "halfpenny",
+
+    # Pennies
+    "d": "penny",
+    "pence": "penny",
+    "pennies": "penny",
+
+    # Sixpence
+    "6d": "sixpence",
+    "i": "sixpence",
+
+    # Shillings
+    "s": "shilling",
+    "shillings": "shilling",
+
+    # Florins
+    "fl": "florin",
+    "florins": "florin",
+
+    # Crowns
+    "cr": "crown",
+    "crowns": "crown",
+
+    # Half-sovereigns
+    "half-sovereign": "half_sovereign",
+    "half_sovereigns": "half_sovereign",
+
+    # Sovereigns / Pounds
+    "p": "sovereign",
+    "£": "sovereign",
+    "ss": "sovereign",
+    "pound": "sovereign",
+    "pounds": "sovereign",
+    "sovereigns": "sovereign",
+}
 
 def to_farthings(amount: int, denomination: str = "sovereign") -> int:
 # Convert a denomination into integer farthings.
+
     if type(amount) is not int or amount < 0:
         raise ValueError("Amount must be a nonnegative whole number.")
 
-    denomination = denomination.lower()
+    # Normalize user input
+    denomination = denomination.strip().lower()
+
+    # Resolve aliases to canonical denomination names
+    denomination = DENOMINATION_ALIASES.get(
+        denomination,
+        denomination
+    )
 
     if denomination not in DENOMINATIONS:
-        raise ValueError("Unknown currency denomination.")
+        raise ValueError(
+            f"Unknown currency denomination: '{denomination}'."
+        )
 
     return amount * DENOMINATIONS[denomination]
 

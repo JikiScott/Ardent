@@ -610,14 +610,19 @@ async def firm_hire(ctx, member: discord.Member):
     )
 
     embed.add_field(
-        name="*To Accept...*",
+        name="*To accept...*",
         value=f"`.firm accept {firm_data['firm_id']}`",
         inline=True
     )
 
     embed.add_field(
-        name="*To Decline...*",
+        name="*To decline...*",
         value=f"`.firm decline {firm_data['firm_id']}`",
+        inline=True
+    )
+    embed.add_field(
+        name="*To view more info...*",
+        value=f"`.firm invites`",
         inline=True
     )
     # Confirm invitation
@@ -626,28 +631,193 @@ async def firm_hire(ctx, member: discord.Member):
         allowed_mentions=discord.AllowedMentions.none()
     )
 
+class SmartInvite(discord.ui.View):
+    def __init__(self, owner_id: int, firm_id: int):
+        super().__init__(timeout=60)
+        self.owner_id = owner_id
+        self.firm_id = firm_id
+
+    async def interaction_check(self, interaction: discord.Interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "Only the invite recipient can respond.",
+                ephemeral=True
+            )
+            return False
+
+        return True
+
+    async def finish(self, interaction, description, title=None):
+        for item in self.children:
+            item.disabled = True
+
+        embed = make_embed(
+            title=title,
+            description=description,
+            color=discord.Color.red()
+        )
+
+        await interaction.response.edit_message(
+            content=None,
+            embed=embed,
+            view=self
+        )
+
+        self.stop()
+
+    @discord.ui.button(
+        label="Accept Invite",
+        style=discord.ButtonStyle.success,
+        emoji="☑️"
+    )
+    async def confirm(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        try:
+            firm_name = accept_firm_invite(
+                interaction.user.id,
+                self.firm_id
+            )
+
+        except ValueError as error:
+            await interaction.response.send_message(
+                str(error),
+                ephemeral=True
+            )
+            return
+
+        firm_data = get_user_firm(interaction.user.id)
+        job_title = firm_data["role"].title()
+
+        await self.finish(
+            interaction,
+            title=f"🔥 {interaction.user.display_name} has joined {firm_name}! 🔥",
+            description=f"***New Role:*** `{job_title}`"
+        )
+
+    @discord.ui.button(
+        label="Decline Invite",
+        style=discord.ButtonStyle.danger,
+        emoji="🇽"
+    )
+    async def decline(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        # Get the firm name before deleting the invitation
+        invites = get_firm_invites(interaction.user.id)
+
+        firm_name = next(
+            (
+                invite["name"]
+                for invite in invites
+                if invite["firm_id"] == self.firm_id
+            ),
+            f"Firm #{self.firm_id}"
+        )
+
+        try:
+            decline_firm_invite(
+                interaction.user.id,
+                self.firm_id
+            )
+
+        except ValueError as error:
+            await interaction.response.send_message(
+                str(error),
+                ephemeral=True
+            )
+            return
+
+        await self.finish(
+            interaction,
+            f"*{interaction.user.display_name} has declined "
+            f"employment with **{firm_name}**.*"
+        )
+
+    async def on_timeout(self):
+        # Disable buttons after 60 seconds
+        for item in self.children:
+            item.disabled = True
+
+        if hasattr(self, "message"):
+            try:
+                await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
+
+    @discord.ui.button(
+        label="Cancel",
+        style=discord.ButtonStyle.secondary
+    )
+    async def cancel(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "Only the firm owner can cancel this request.",
+                ephemeral=True
+            )
+            return
+
+        for item in self.children:
+            item.disabled = True
+
+        embed = make_embed(
+            title="Firm Disbandment Cancelled",
+            description="Your firm has been preserved. No changes were made.",
+            color=discord.Color.green()
+        )
+
+        await interaction.response.edit_message(
+            content=None,
+            embed=embed,
+            view=self
+        )
+
+        self.stop()
+
 @firm.command(name="invites", help="View firm invites.")
 async def firm_invites(ctx):
     invites = get_firm_invites(ctx.author.id)
 
     if not invites:
-        await send_notice(ctx, "You have no pending employment invitations.")
+        await send_notice(
+            ctx,
+            "You have no pending employment invitations."
+        )
         return
 
-    message = "🔥**Pending Employment Invitations:**🔥\n"
-
     for invite in invites:
-        message += (
-            f"\n- **{invite['name']}** \n"
-            f"-# (*Firm ID: `{invite['firm_id']}`*)\n"
-            f"To Accept: `.firm accept {invite['firm_id']}`\n"
-            f"To Decline: `.firm decline {invite['firm_id']}`\n"
+        embed = make_embed(
+            title="🔥 Employment Invitation 🔥",
+            description=(
+                f"You have been invited to join "
+                f"**{invite['name']}**!\n"
+                f"-# Firm ID: `{invite['firm_id']}\n\n`"
+                f"***Offered Position:*** `Laborer`"
+            ),
+            color=discord.Color.red()
         )
 
-    await ctx.send(
-        message,
-        allowed_mentions=discord.AllowedMentions.none()
-    )
+        view = SmartInvite(
+            owner_id=ctx.author.id,
+            firm_id=invite["firm_id"]
+        )
+
+        message = await ctx.send(
+            embed=embed,
+            view=view,
+            allowed_mentions=discord.AllowedMentions.none()
+        )
+
+        # Save the message so the view can disable buttons on timeout
+        view.message = message
 
 @firm.command(name="accept", help="Accept an invitation to a firm.")
 async def firm_accept(ctx, firm_id: int):
