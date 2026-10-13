@@ -31,6 +31,7 @@ from db1.db import (
     dismiss_firm_member,
     disband_firm,
     rename_firm,
+    get_treasury_balance
 )
 from econ.mine import mine
 import time
@@ -324,7 +325,7 @@ async def coin(
                 description=(
                     f"*The coin landed on **{result.title()}**!*\n\n"
                     f"{ctx.author.mention} won "
-                    f"🔥**{wager_display}**🔥!"
+                    f"🔥 **{wager_display}** 🔥!"
                 ),
                 color=discord.Color.red()
             )
@@ -543,7 +544,7 @@ async def firm_info(ctx):
     )
 
     embed = make_embed(
-        title=f"🔥`{firm_name}`🔥",
+        title=f"🔥 `{firm_name}` 🔥",
         description=f"Firm ID: `{firm_id}`",
         color=discord.Color.red()
     )
@@ -604,8 +605,8 @@ async def firm_hire(ctx, member: discord.Member):
     # Build embed
     embed = make_embed(
         description=f"# FIRM INVITATION\n"
-                    f"🔥**{member.mention}** has been invited to join "
-                    f"**{firm_data['name']}**!🔥\n",
+                    f"🔥 **{member.mention}** has been invited to join "
+                    f"**{firm_data['name']}**! 🔥\n",
         color=discord.Color.red()
     )
 
@@ -799,7 +800,7 @@ async def firm_invites(ctx):
             description=(
                 f"You have been invited to join "
                 f"**{invite['name']}**!\n"
-                f"-# Firm ID: `{invite['firm_id']}\n\n`"
+                f"-# Firm ID: `{invite['firm_id']}`\n\n"
                 f"***Offered Position:*** `Laborer`"
             ),
             color=discord.Color.red()
@@ -837,8 +838,8 @@ async def firm_accept(ctx, firm_id: int):
 
     # Build embed
     embed = make_embed(
-        title=f"🔥 {ctx.author.mention} has joined {firm_name}! 🔥",
-        description=f"***New Role:*** `{job_title}`",
+        description=f"#🔥 {ctx.author.mention} has joined {firm_name}! 🔥"
+                    f"***New Role:*** `{job_title}`",
         color=discord.Color.red()
     )
 
@@ -1170,5 +1171,47 @@ async def firm_rename_error(ctx, error):
         raise error
 
 # FIRM END
+# TREASURY START
+
+@bot.group(name="treasury", invoke_without_command=True)
+async def treasury(ctx):
+#  Treasury management.
+
+    await send_notice(
+        ctx,
+        "Use `.treasury help` to view Treasury commands."
+    )
+
+@treasury.command(name="balance", help="View Treasury balance.")
+async def treasury_balance(ctx):
+    balance = get_treasury_balance()
+
+    await send_embed(
+        ctx,
+        title="Arderian Treasury Report",
+        description=f"**Available Funds:** {format_currency(balance)}",
+        color=discord.Color.gold()
+    )
+
+@treasury.command(name="help", help="List Treasury commands.")
+async def treasury_help(ctx):
+    fields = []
+
+    for command in sorted(treasury.commands, key=lambda c: c.name):
+        if command.hidden:
+            continue
+
+        fields.append((
+            f".{command.qualified_name} {command.signature}".strip(),
+            command.help or "No description available.",
+            False
+        ))
+
+    await send_embed(
+        ctx,
+        title="Treasury Command List",
+        fields=fields,
+        color=discord.Color.gold()
+    )
 
 bot.run(token, log_handler=handler, log_level=logging.DEBUG)
