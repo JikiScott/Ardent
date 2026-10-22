@@ -31,11 +31,13 @@ from db1.db import (
     dismiss_firm_member,
     disband_firm,
     rename_firm,
+    get_firm_balance,
     get_treasury_balance
 )
 from econ.mine import mine
 import time
 from econ.currency import format_currency, to_farthings
+from decimal import Decimal
 
 # Shared embed helpers. All Ardent messages use one visual style.
 def make_embed(*, title=None, description=None, color=None, fields=None, footer=None):
@@ -406,52 +408,7 @@ async def mine_error(ctx, error):
     else:
         raise error
 
-@bot.command(aliases=["inv"])
-async def inventory(ctx):
-    # Find the user's firm
-    firm = get_user_firm(ctx.author.id)
 
-    if firm is None:
-        await ctx.send(
-            "You must be employed by a firm to view its inventory."
-        )
-        return
-
-    # Retrieve the firm's inventory
-    current_inventory = get_inventory(
-        "firm",
-        firm["firm_id"]
-    )
-
-    embed = make_embed(
-        title=f"🔥 {firm['name']}: *Crystal Inventory* 🔥",
-        description=f"-# Firm ID: `{firm['firm_id']}`",
-        color=discord.Color.dark_gold()
-    )
-
-    if not current_inventory:
-        embed.add_field(
-            name="*Inventory Empty*",
-            value="**This firm has not mined any crystals yet.**",
-            inline=False
-        )
-
-    else:
-        for crystal in current_inventory:
-            crystal_class = crystal["crystal_class"].title()
-            grade = crystal["grade"].title()
-            quantity = crystal["quantity"]
-
-            embed.add_field(
-                name=f"__{grade} {crystal_class}__",
-                value=f"**{quantity} stone**",
-                inline=True
-            )
-
-    await ctx.send(
-        embed=embed,
-        allowed_mentions=discord.AllowedMentions.none()
-    )
 
 # MINING END
 # FIRM START
@@ -524,18 +481,21 @@ async def firm_create_error(ctx, error):
 @firm.command(name="info", help="Show firm information.")
 async def firm_info(ctx):
     user_id = ctx.author.id
-
     firm_data = get_user_firm(user_id)
 
     if firm_data is None:
-        await ctx.send(
-            "You are not currently employed by a firm."
-        )
+        await send_notice(ctx, "You are not currently employed by a firm.")
         return
 
     firm_id = firm_data["firm_id"]
     firm_name = firm_data["name"]
     owner_id = firm_data["owner_id"]
+    firm_balance = get_firm_balance(firm_id)
+    firm_inventory = get_inventory("firm", firm_id)
+    total_stone = sum(
+        (Decimal(str(crystal["quantity"])) for crystal in firm_inventory),
+        Decimal("0")
+    )
 
     members = get_firm_members(firm_id)
     employee_count = sum(
@@ -567,12 +527,91 @@ async def firm_info(ctx):
         inline=False
     )
 
+    embed.add_field(
+        name="Firm Account Balance",
+        value=f"**{format_currency(firm_balance)}**",
+        inline=True
+    )
+
+    embed.add_field(
+        name="Total Crystal Holdings",
+        value=f"**{total_stone:,.2f} stone**",
+        inline=True
+    )
+
+    await ctx.send(
+        embed=embed,
+        allowed_mentions=discord.AllowedMentions.none()
+    )
+
+@firm.command(
+    name="inv",
+    aliases=["inventory"],
+    help="View your firm's crystal inventory."
+)
+async def firm_inventory(ctx):
+    # Find the user's firm
+    firm = get_user_firm(ctx.author.id)
+
+    if firm is None:
+        await ctx.send(
+            "You must be employed by a firm to view its inventory."
+        )
+        return
+
+    # Retrieve the firm's inventory
+    current_inventory = get_inventory(
+        "firm",
+        firm["firm_id"]
+    )
+
+    grade_order = {
+        "alpha": 0,
+        "beta": 1,
+        "gamma": 2,
+        "delta": 3,
+    }
+
+    current_inventory = sorted(
+        current_inventory,
+        key=lambda crystal: (
+            grade_order.get(crystal["grade"].lower(), 99),
+            crystal["crystal_class"].lower()
+        )
+    )
+
+    embed = make_embed(
+        title=f"🔥 {firm['name']}: *Crystal Inventory* 🔥",
+        description=f"-# Firm ID: `{firm['firm_id']}`",
+        color=discord.Color.dark_gold()
+    )
+
+    if not current_inventory:
+        embed.add_field(
+            name="*Inventory Empty*",
+            value="**This firm has not mined any crystals yet.**",
+            inline=False
+        )
+
+    else:
+        for crystal in current_inventory:
+            crystal_class = crystal["crystal_class"].title()
+            grade = crystal["grade"].title()
+            quantity = crystal["quantity"]
+
+            embed.add_field(
+                name=f"__{grade} {crystal_class}__",
+                value=f"**{quantity} stone**",
+                inline=True
+            )
+
     await ctx.send(
         embed=embed,
         allowed_mentions=discord.AllowedMentions.none()
     )
 
 @firm.command(name="hire", help="Hire a firm employee.")
+@commands.cooldown(1, 30, commands.BucketType.user)
 async def firm_hire(ctx, member: discord.Member):
     firm_data = get_user_firm(ctx.author.id)
 
@@ -631,6 +670,13 @@ async def firm_hire(ctx, member: discord.Member):
         embed=embed,
         allowed_mentions=discord.AllowedMentions.none()
     )
+@firm_hire.error
+async def firm_hire_error(ctx, error):
+    if isinstance(error, commands.CommandOnCooldown):
+        await send_cooldown(ctx, "hire an employee", error.retry_after)
+    else:
+        raise error
+
 
 class SmartInvite(discord.ui.View):
     def __init__(self, owner_id: int, firm_id: int):
